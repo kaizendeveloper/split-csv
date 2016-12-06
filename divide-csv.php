@@ -178,6 +178,7 @@ function splitFile($file, $parts = 1){
     chmod(generateFileNumber($file,$numFile), octdec('777'));
 
     $numLinea = 0;
+    $csvHeader = '';
 
     //We read the input file line by line until depletion
     while (!feof($fileToSplitHandle)) {
@@ -201,6 +202,8 @@ function splitFile($file, $parts = 1){
             //Check if we have fulfilled the split file with the right amount of lines
             if(($numLinea % $div) === 0){
 
+                //We have enough for one file
+
                 //We'll save our command in the command file by doing the respective substitution
                 if(!is_null($tmpCmdFile)){
                     fwrite($tmpCmdFile, preg_replace('/PLACEHOLDER/i', generateFileNumber($file,$numFile),$subString) . "\r\n");
@@ -209,37 +212,27 @@ function splitFile($file, $parts = 1){
 
                 $numFile++;
 
-                //Check if we're working on the last file
-                if($numFile === $parts) {
+                // We need to close the file
+                // - Create a new one with the next number
+                // - Put the header
+                // - Save the line
 
-                    //No, we are still working on the previuos file. Just put the content in
-                    fwrite($splitOutputFile, $linea);
 
-                } else {
 
-                    //No, we need to close the file
-                    // - Create a new one with the next number
-                    // - Put the header
-                    // - Save the line
+                //Close the split file
+                fclose($splitOutputFile);
 
-                    //But first we'll save our command in the command file by doing the respective substitution (after file number change)
-                    /*if(!is_null($tmpCmdFile)){
-                        fwrite($tmpCmdFile, preg_replace('/PLACEHOLDER/i', generateFileNumber($file,$numFile),$subString) . "\r\n");
-                    }*/
+                //Create new split file
+                $splitOutputFile = fopen(generateFileNumber($file,$numFile), 'w');
+                chmod(generateFileNumber($file,$numFile) , octdec('777'));
 
-                    //Close the split file
-                    fclose($splitOutputFile);
+                //Save header and line
+                fwrite($splitOutputFile, $csvHeader);
+                fwrite($splitOutputFile, $linea);
 
-                    //Create new split file
-                    $splitOutputFile = fopen(generateFileNumber($file,$numFile), 'w');
-                    chmod(generateFileNumber($file,$numFile) , octdec('777'));
-
-                    //Save header and line
-                    fwrite($splitOutputFile, $csvHeader);
-                    fwrite($splitOutputFile, $linea);
-                }
             } else {
-                //No, we haven't finished yet, so we save and keep going on
+
+                //No, we don't have enough for one file, so we save and keep going on
                 fwrite($splitOutputFile, $linea);
             }
 
