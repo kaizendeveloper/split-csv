@@ -7,6 +7,264 @@
 //same headers as the origin file
 
 
+
+//-----------------------------------------------------------------------------
+//                     FUNCTION DECLARE AREA
+//-----------------------------------------------------------------------------
+
+
+/**
+ * Retrieves the number of lines a text file has
+ *
+ * @param $file
+ * @return int
+ */
+function getLines($file)
+{
+
+    //Open the file as read only and as binary
+    $f = fopen($file, 'rb');
+    $lines = 0;
+
+    //Read using chunks of 8192 bytes until END OF FILE
+    while (!feof($f)) {
+        $lines += substr_count(fread($f, 8192), "\n");
+    }
+
+    fclose($f);
+
+    return $lines;
+
+}
+
+/**
+ * Generates a part number filename
+ *
+ * @param $file
+ * @param null $partNumber
+ * @return string
+ */
+function generateFileNumber($file, $partNumber = null){
+
+    $filePathInfo = pathinfo($file);
+
+    return $filePathInfo['filename'] . '-part-' . sprintf('%03d', (int)$partNumber) . '.' . $filePathInfo['extension'];
+
+}
+
+/**
+ * Generates a part number filename
+ *
+ * @param $file
+ * @param null $partNumber
+ * @return string
+ */
+function createNewSplitfile($file, $partNumber = null){
+
+    $splitFileFilename = generateFileNumber($file, $partNumber);
+
+    //New split file's File Handle
+    $splitOutputFileFH = fopen($splitFileFilename, 'w');
+
+    if($splitOutputFileFH === false){
+        die("\r\nCould not create split file " . $splitFileFilename . " check if the script has the right write permissions.\r\n\r\n");
+    }
+
+    //After creating the file, make it readable/writeable to anyone
+    chmod(generateFileNumber($file, $partNumber), octdec('777'));
+
+
+    return $splitOutputFileFH;
+
+}
+
+/**
+ * Actually splits the file
+ *
+ * @param $file
+ * @param int $parts
+ * @return int
+ */
+
+function splitFile($file, $parts = 1)
+{
+
+    //Generic default declarations
+
+    $lineNumber = 0;
+    $fileNumber = 0;
+    $csvHeader = '';
+
+
+    //Check if target files exists
+    if(file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file) && is_file(__DIR__ . DIRECTORY_SEPARATOR . $file)){
+        $inputFileLines = (int)getLines($file) + 1;
+    } else {
+        echo "\r\nError: Origin file not found or not specified\r\n\r\n";
+        exit(2);
+    }
+
+
+    //Amount of pieces calculation
+    //-------------------------------------
+
+    $linesPerSplitFile = intval($inputFileLines / $parts);
+    $roundLineExcess = $inputFileLines % $parts;
+
+    //This way we make sure the amount of split files comprehends all of the lines of the original file
+    //by adding one line per single file
+    if( ($roundLineExcess) > 0) {
+        $linesPerSplitFile ++;
+    }
+
+    //GC
+    $roundLineExcess = null;
+    unset($roundLineExcess);
+
+    //-------------------------------------
+
+
+
+    //PATTERN FILE READING
+    //--------------------------------------
+
+    //Depending on the pattern written in the file we will generate the sequential part using the split file
+    //numbered names
+
+    //If the pattern file exists we might need to generate the secuencial command launch commands
+    if(file_exists(__DIR__ . DIRECTORY_SEPARATOR . 'pattern.txt')){
+
+        //Get the file handle
+        $tmpHandlePatternFile = fopen(__DIR__ . DIRECTORY_SEPARATOR . 'pattern.txt', 'r');
+        //Read the whole pattern
+        $subString = fread($tmpHandlePatternFile, 10000);
+        //The file is now useless
+        fclose($tmpHandlePatternFile);
+
+        //Create output file
+        $tmpCmdFile = fopen(__DIR__ . DIRECTORY_SEPARATOR . 'cmd.txt', 'w');
+        //GC
+        $tmpHandlePatternFile = null;
+        unset($tmpHandlePatternFile);
+
+    }
+
+    //Create original file's File Handle
+    $originalFileFH = fopen($file, 'rb');
+
+    if($originalFileFH === false){
+        die("\r\nCould not read the origin file, check if the file is accesible.\r\n\r\n");
+    }
+
+    //Create first split file
+    $splitOutputFileFH = createNewSplitfile($file, $fileNumber);
+
+    //We'll save the first command in the command file by doing the respective substitution
+    if(!is_null($tmpCmdFile)){
+        fwrite($tmpCmdFile, preg_replace('/PLACEHOLDER/i', generateFileNumber($file,$fileNumber), $subString) . "\r\n");
+    }
+
+
+    //We go on through each line of the origin CSV
+    while (!feof($originalFileFH)) {
+
+        //Our actual line counter
+        $lineNumber++;
+
+        //We need to catch the header for saving it later on each split file
+        if($lineNumber === 1)
+        {
+            //Read the header
+            $csvHeader = fgets($originalFileFH);
+            //And save it in the split file
+            fwrite($splitOutputFileFH, $csvHeader);
+
+        } else {
+
+            //Other lines (not header)
+
+            //Read a normal line
+            $linea = fgets($originalFileFH);
+
+            //Check if we have fulfilled the split file with the right amount of lines
+            if(($lineNumber % $linesPerSplitFile) === 0){
+
+                //Yes, we have enough for one file
+
+
+                //We have completed a split file, move on to the next one
+                $fileNumber++;
+
+                //We'll save our command in the command file by doing the respective substitution
+                if(!is_null($tmpCmdFile)){
+                    fwrite($tmpCmdFile, preg_replace('/PLACEHOLDER/i', generateFileNumber($file,$fileNumber), $subString) . "\r\n");
+                }
+
+
+
+
+                // Now we need to:
+                // - Close the file
+                // - Create a new one with the next number
+                // - Put the header
+                // - Save the line
+
+
+                //Close the split file
+                fclose($splitOutputFileFH);
+
+                //In order to avoid writing a new file upon being at the very last line, we make our last check
+                if($lineNumber < $inputFileLines){
+
+                    //Practically we're creating a new brand split file
+                    //--------------------------------------------------
+
+                    //Create new split file
+                    $splitOutputFileFH = createNewSplitfile($file,$fileNumber);
+
+                    //Save header and line
+                    fwrite($splitOutputFileFH, $csvHeader);
+                }
+
+
+            }
+
+            //Write a normal line
+            fwrite($splitOutputFileFH, $linea);
+
+
+        }
+
+    }
+
+    //Housekeeping
+    fclose($originalFileFH);
+    fclose($splitOutputFileFH);
+    fclose($tmpCmdFile);
+    $tmpCmdFile = null;
+
+}
+//--------------------------------- END OF FUNCTION DECLARE AREA --------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//-----------------------------------------------------------------------------
+//                              PROGRAM'S MAIN
+//-----------------------------------------------------------------------------
+
+
+
 //CLI ARGUMENT EXTRACTION
 //-------------------------------------------------------------------
 
@@ -86,166 +344,6 @@ if(isset($parsedOptions['pieces']))
 
 
 
-
-
-/**
- * Retrieves the number of lines a text file has
- *
- * @param $file
- * @return int
- */
-function getLines($file)
-{
-
-    //Open the file as read only and as binary
-    $f = fopen($file, 'rb');
-    $lines = 0;
-
-    //Read using chunks of 8192 bytes until END OF FILE
-    while (!feof($f)) {
-        $lines += substr_count(fread($f, 8192), "\n");
-    }
-
-    fclose($f);
-
-    return $lines;
-
-}
-
-/**
- * Generates a part number filename
- *
- * @param $file
- * @param null $partNumber
- * @return string
- */
-function generateFileNumber($file, $partNumber = null){
-
-    $filePathInfo = pathinfo($file);
-
-    return $filePathInfo['filename'] . '-part-' . sprintf('%03d', (int)$partNumber) . '.' . $filePathInfo['extension'];
-
-}
-
-/**
- * Actually splits the file
- *
- * @param $file
- * @param int $parts
- * @return int
- */
-
-function splitFile($file, $parts = 1){
-
-
-    //Check if target files exists
-    if(file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file) && is_file(__DIR__ . DIRECTORY_SEPARATOR . $file)){
-        $linee = (int)getLines($file) + 1;
-    } else {
-        echo "\r\nError: File not found or not specified\r\n\r\n";
-        exit(2);
-    }
-
-
-    //Calculate amount of pieces
-    $div = (int)($linee / $parts);
-
-    $numFile = 0;
-
-    //If the pattern file exists we might need to generate the secuencial command launch commands
-    if(file_exists(__DIR__ . DIRECTORY_SEPARATOR . 'pattern.txt')){
-
-        //Get the file handle
-        $tmpPatternFile = fopen(__DIR__ . DIRECTORY_SEPARATOR . 'pattern.txt', 'r');
-        //Read the whole pattern
-        $subString = fread($tmpPatternFile, 10000);
-        //The file is now useless
-        fclose($tmpPatternFile);
-
-        //Create output file
-        $tmpCmdFile = fopen(__DIR__ . DIRECTORY_SEPARATOR . 'cmd.txt', 'w');
-        //GC
-        $tmpPatternFile = null;
-
-    }
-
-    //Open
-    $fileToSplitHandle = fopen($file, 'rb');
-
-    //Create the empty file
-    $splitOutputFile = fopen(generateFileNumber($file,$numFile), 'w');
-    //Make it readable/writeable to anyone
-    chmod(generateFileNumber($file,$numFile), octdec('777'));
-
-    $numLinea = 0;
-    $csvHeader = '';
-
-    //We read the input file line by line until depletion
-    while (!feof($fileToSplitHandle)) {
-
-        //Our actual line counter
-        $numLinea++;
-
-        //For saving the header on each split file
-        if($numLinea === 1)
-        {
-            //Read the header
-            $csvHeader = fgets($fileToSplitHandle);
-            //And save it in the split file
-            fwrite($splitOutputFile, $csvHeader);
-
-        } else {
-
-            //Read a normal line
-            $linea = fgets($fileToSplitHandle);
-
-            //Check if we have fulfilled the split file with the right amount of lines
-            if(($numLinea % $div) === 0){
-
-                //We have enough for one file
-
-                //We'll save our command in the command file by doing the respective substitution
-                if(!is_null($tmpCmdFile)){
-                    fwrite($tmpCmdFile, preg_replace('/PLACEHOLDER/i', generateFileNumber($file,$numFile),$subString) . "\r\n");
-                }
-
-
-                $numFile++;
-
-                // We need to close the file
-                // - Create a new one with the next number
-                // - Put the header
-                // - Save the line
-
-
-
-                //Close the split file
-                fclose($splitOutputFile);
-
-                //Create new split file
-                $splitOutputFile = fopen(generateFileNumber($file,$numFile), 'w');
-                chmod(generateFileNumber($file,$numFile) , octdec('777'));
-
-                //Save header and line
-                fwrite($splitOutputFile, $csvHeader);
-                fwrite($splitOutputFile, $linea);
-
-            } else {
-
-                //No, we don't have enough for one file, so we save and keep going on
-                fwrite($splitOutputFile, $linea);
-            }
-
-        }
-
-    }
-    //Housekeeping
-    fclose($fileToSplitHandle);
-    fclose($splitOutputFile);
-    fclose($tmpCmdFile);
-    $tmpCmdFile = null;
-
-}
 
 //Split the file and exit gracefully
 splitFile($originalFileName,$numPieces);
